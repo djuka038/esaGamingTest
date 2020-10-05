@@ -27,7 +27,7 @@ The Lumen framework is open-sourced software licensed under the [MIT license](ht
 
 To game to work run migrations with this command php artisan migrate, also set up in .env file few arguments:
 
-## This is example ov env variables
+## This is example of env variables
 CACHE_DRIVER=memcached
 QUEUE_CONNECTION=database
 
