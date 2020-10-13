@@ -5,7 +5,7 @@ namespace App\Providers;
 use App\Providers\GameService;
 use App\Providers\ArmyService;
 use App\Providers\CacheService;
-use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Collection;
 use stdClass;
 
 class BattleService
@@ -23,59 +23,50 @@ class BattleService
                 GameService::updateGame($game->id, ['status' => GameService::STATUS_ACTIVE]);
             }
 
-            foreach ($game->participants as $attackingArmy) {
-                if (self::getRandomChanceForAttack($attackingArmy->numOfUnits) === true) {
-                    $defender = null;
-                    switch ($attackingArmy->strategy) {
-                        case ArmyService::STRATEGY_STRONGEST:
-                            $defender = GameService::getStrongestParticipantOfGame($game->id, $attackingArmy->id);
-                            break;
-                        case ArmyService::STRATEGY_WEAKEST:
-                            $defender = GameService::getWeakestParticipantOfGame($game->id, $attackingArmy->id);
-                            break;
-                        case ArmyService::STRATEGY_RANDOM:
-                            $defender = GameService::getRandomParticipantOfGame($game->id, $attackingArmy->id);
-                            break;
-                    }
+            foreach ($game->participants as $attacker) {
+                $defender = null;
+                switch ($attacker->strategy) {
+                    case ArmyService::STRATEGY_STRONGEST:
+                        $defender = GameService::getStrongestParticipantOfGame($game->id, $attacker->id);
+                        break;
+                    case ArmyService::STRATEGY_WEAKEST:
+                        $defender = GameService::getWeakestParticipantOfGame($game->id, $attacker->id);
+                        break;
+                    case ArmyService::STRATEGY_RANDOM:
+                        $defender = GameService::getRandomParticipantOfGame($game->id, $attacker->id);
+                        break;
+                }
 
-                    if ($defender !== null) {
-                        $turn = self::TURN_ATTACKER;
-                        $defenderArmy = $defender->army;
-                        CacheService::cacheData(self::ATTACKING_UNITS, self::mapUnits($attackingArmy->units->keyBy('id')));
-                        CacheService::cacheData(self::DEFENDING_UNITS, self::mapUnits($defenderArmy->units->keyBy('id')));
+                if ($defender !== null) {
+                    $turn = self::TURN_ATTACKER;
+                    $attackingArmy =  self::mapUnits($attacker->units->keyBy('id'));
+                    $defendingArmy =  self::mapUnits($defender->army->units->keyBy('id'));
 
-                        $maxTurns = CacheService::getCachedDataByKey(self::ATTACKING_UNITS)->count()
-                            + CacheService::getCachedDataByKey(self::DEFENDING_UNITS)->count();
+                    for ($i = 1; $i <= $attackingArmy->count() + $defendingArmy->count(); $i++) {
+                        if ($attackingArmy->count() < 1) {
+                            GameService::updateParticipantStatusDead($game->id, $attacker->id);
+                        }
 
-                        for ($i = 1; $i <= $maxTurns; $i++) {
+                        if ($defendingArmy->count() < 1) {
+                            GameService::updateParticipantStatusDead($game->id, $defender->id);
+                        }
+
+                        if ($attackingArmy->count() > 0 && $defendingArmy->count() > 0) {
                             switch ($turn) {
                                 case self::TURN_ATTACKER:
-                                    if (CacheService::getCachedDataByKey(self::ATTACKING_UNITS)->count() > 0) {
-                                        $attackingUnit = CacheService::getCachedDataByKey(self::ATTACKING_UNITS)
-                                            ->where('attacked', false)->where('standDownTime', '<', microtime(true));
-                                        if ($attackingUnit->isNotEmpty()) {
-                                            self::attackUnit($attackingUnit->random(), $turn);
-                                        }
-                                    } else {
-                                        GameService::updateParticipantStatusDead($game->id, $attackingArmy->id);
+                                    if (self::getRandomChanceForAttack($attackingArmy->count())) {
+                                        self::engageArmies($attackingArmy, $defendingArmy);
                                     }
                                     $turn = self::TURN_DEFENDER;
                                     break;
                                 case self::TURN_DEFENDER:
-                                    if (CacheService::getCachedDataByKey(self::DEFENDING_UNITS)->count() > 0) {
-                                        $attackingUnit = CacheService::getCachedDataByKey(self::DEFENDING_UNITS)
-                                            ->where('attacked', false)->where('standDownTime', '<', microtime(true));
-                                        if ($attackingUnit->isNotEmpty()) {
-                                            self::attackUnit($attackingUnit->random(), $turn);
-                                        }
-                                    } else {
-                                        GameService::updateParticipantStatusDead($game->id, $defenderArmy->id);
+                                    if (self::getRandomChanceForAttack($defendingArmy->count())) {
+                                        self::engageArmies($defendingArmy, $attackingArmy);
                                     }
                                     $turn = self::TURN_ATTACKER;
                                     break;
                             }
                         }
-                        CacheService::flushCache();
                     }
                 }
             }
@@ -108,79 +99,84 @@ class BattleService
         });
     }
 
-    /**
-     * Engages two units
-     *
-     * @param stdClass $attackingUnit
-     * @param stdClass $defendingUnit
-     * @return void
-     */
-    private static function attackUnit(stdClass $attackingUnit, string $turn)
+    private static function engageArmies(Collection $attackingArmy, Collection $defendingArmy)
     {
-        $attackingUnits = CacheService::getCachedDataByKey(self::ATTACKING_UNITS);
-        $defendingUnits = CacheService::getCachedDataByKey(self::DEFENDING_UNITS);
+        $attackingUnit = null;
+        $defendingUnit = null;
 
-        if ($defendingUnits->isNotEmpty() && $attackingUnits->isNotEmpty()) {
-            $defendingUnit = null;
+        if ($attackingArmy->where('attacked', false)->where('standDownTime', '<', microtime(true))->count() > 0) {
+            $attackingUnit = $attackingArmy->where('attacked', false)->where('standDownTime', '<', microtime(true))
+                ->random();
 
-            if ($turn === self::TURN_ATTACKER) {
-                $defendingUnit = $defendingUnits->where('id', $attackingUnit->attackedUnitId)->first();
-                if ($defendingUnit === null) {
-                    $defendingUnit = $defendingUnits->random();
-                }
-            } else {
-                $defendingUnit = $attackingUnits->where('id', $attackingUnit->attackedUnitId)->first();
-                if ($defendingUnit === null) {
-                    $defendingUnit = $attackingUnits->random();
-                }
-            }
+            $defendingUnit = $defendingArmy->where('id', $attackingUnit->attackedUnitId)->first();
+        }
+
+        if (!$defendingUnit instanceof stdClass) {
+            $defendingUnit = $defendingArmy->random();
+        }
+
+        if ($attackingUnit instanceof stdClass && $defendingUnit instanceof stdClass) {
+            $defendingUnit = self::engageUnits($attackingUnit, $defendingUnit, $defendingArmy->count() === 1);
 
             if ($attackingUnit->attackedUnitId === null) {
-                $attackingUnit->attackedUnitId = $defendingUnit->id;
-                $attackingUnit->attacked = true;
+                $attackingArmy[$attackingUnit->id]->attackedUnitId = $defendingUnit->id;
+                $attackingArmy[$attackingUnit->id]->attacked = true;
             }
 
-            if ($defendingUnit->attackedUnitId === null) {
-                $defendingUnit->attackedUnitId = $attackingUnit->id;
-            }
-
-            if ($defendingUnits->where('health', '>', 0)->count() === 1) {
-                $defendingUnit->health -= env('ATTACK_DAMAGE_ONE_UNIT');
-                $defendingUnit->receivedDamage += env('ATTACK_DAMAGE_ONE_UNIT');
+            if ($defendingUnit->health <= 0) {
+                $defendingArmy->pop($defendingUnit->id);
             } else {
-                $defendingUnit->health -= env('ATTACK_DAMAGE');
-                $defendingUnit->receivedDamage += env('ATTACK_DAMAGE');
-            }
+                $defendingArmy[$defendingUnit->id]->health = $defendingUnit->health;
+                $defendingArmy[$defendingUnit->id]->receivedDamage = $defendingUnit->receivedDamage;
+                $defendingArmy[$defendingUnit->id]->standDownTime = $defendingUnit->standDownTime;
 
-            if ($defendingUnit->receivedDamage >= env('STAND_DOWN_DAMAGE')) {
-                $defendingUnit->standDownTime = microtime(true) + env('STAND_DOWN_TIME');
-            }
-
-            if ($turn === self::TURN_ATTACKER) {
-                $attackingUnits[$attackingUnit->id] = $attackingUnit;
-                CacheService::cacheData(self::ATTACKING_UNITS, $attackingUnits);
-
-                if ($defendingUnit->health <= 0) {
-                    $defendingUnits->pop($defendingUnit->id);
-                } else {
-                    $defendingUnits[$defendingUnit->id] = $defendingUnit;
+                if ($defendingUnit->attackedUnitId === null) {
+                    $defendingArmy[$defendingUnit->id]->attackedUnitId = $attackingUnit->id;
                 }
-                CacheService::cacheData(self::DEFENDING_UNITS, $defendingUnits);
-                ArmyService::updateUnitHealth($defendingUnit->id, $defendingUnit->health);
-            } else {
-                $defendingUnits[$attackingUnit->id] = $attackingUnit;
-                CacheService::cacheData(self::DEFENDING_UNITS, $defendingUnits);
-
-                if ($attackingUnit->health <= 0) {
-                    $attackingUnits->pop($attackingUnit->id);
-                } else {
-                    $attackingUnits[$defendingUnit->id] = $defendingUnit;
-                }
-                CacheService::cacheData(self::ATTACKING_UNITS, $attackingUnits);
-                ArmyService::updateUnitHealth($defendingUnit->id, $defendingUnit->health);
             }
 
-            self::recoverUnits();
+            self::recoverUnits($attackingArmy, $defendingArmy);
+        }
+    }
+
+    private static function engageUnits(stdClass $attackingUnit, stdClass $defendingUnit, bool $lastUnit = false)
+    {
+        if ($lastUnit) {
+            $defendingUnit->health -= env('ATTACK_DAMAGE_ONE_UNIT');
+            $defendingUnit->receivedDamage += env('ATTACK_DAMAGE_ONE_UNIT');
+        } else {
+            $defendingUnit->health -= env('ATTACK_DAMAGE');
+            $defendingUnit->receivedDamage += env('ATTACK_DAMAGE');
+        }
+
+        if ($defendingUnit->receivedDamage >= env('STAND_DOWN_DAMAGE')) {
+            $defendingUnit->standDownTime = microtime(true) + env('STAND_DOWN_TIME');
+        }
+
+        ArmyService::updateUnitHealth($defendingUnit->id, $defendingUnit->health);
+
+        return $defendingUnit;
+    }
+
+    private static function recoverUnits(Collection $attackingArmy, Collection $defendingArmy)
+    {
+        $attackingUnitsRecovery = $attackingArmy->where('receivedDamage', '>=', env('STAND_DOWN_DAMAGE'))
+            ->where('standDownTime', '<', microtime(true));
+        $defendingUnitsRecovery = $defendingArmy->where('receivedDamage', '>=', env('STAND_DOWN_DAMAGE'))
+            ->where('standDownTime', '<', microtime(true));
+
+        if ($attackingUnitsRecovery->isNotEmpty()) {
+            foreach ($attackingUnitsRecovery as $unit) {
+                $attackingArmy[$unit->id]->receivedDamage = 0;
+                $attackingArmy[$unit->id]->standDownTime = null;
+            }
+        }
+
+        if ($defendingUnitsRecovery->isNotEmpty()) {
+            foreach ($defendingUnitsRecovery as $unit) {
+                $defendingArmy[$unit->id]->receivedDamage = 0;
+                $defendingArmy[$unit->id]->standDownTime = null;
+            }
         }
     }
 
@@ -195,7 +191,7 @@ class BattleService
         return rand(1, env('MAX_UNITS')) <= $numOfUnits ? true : false;
     }
 
-    private static function recoverUnits()
+    private static function recoverUnits1()
     {
         $attackingUnits = CacheService::getCachedDataByKey(self::ATTACKING_UNITS);
         $defendingUnits = CacheService::getCachedDataByKey(self::DEFENDING_UNITS);

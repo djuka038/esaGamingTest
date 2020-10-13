@@ -239,19 +239,7 @@
     }
 
     function run() {
-        var autoRunCheckbox = document.getElementById("autoRun");
-        if (autoRunCheckbox.checked == true) {
-            repeatId = setInterval(nextTurn, 3000);
-        } else {
-            nextTurn();
-        }
-    }
-
-    function stopAutoRun() {
-        var autoRunCheckbox = document.getElementById("autoRun");
-        if (autoRunCheckbox.checked == false) {
-            clearInterval(repeatId);
-        }
+        nextTurn();
     }
 
     function nextTurn() {
@@ -264,7 +252,11 @@
     function renderNextTurn() {
         if (httpRequest.readyState === XMLHttpRequest.DONE) {
             if (httpRequest.status === 200) {
+                var autoRunCheckbox = document.getElementById("autoRun");
                 getGameStats();
+                if (autoRunCheckbox.checked == true) {
+                    run();
+                }
             } else {
                 alert("There was a problem with the request.");
             }
