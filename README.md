@@ -22,3 +22,21 @@ If you discover a security vulnerability within Lumen, please send an e-mail to 
 ## License
 
 The Lumen framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+
+## Setup
+
+To game to work run migrations with this command php artisan migrate, also set up in .env file few arguments:
+
+## This is example of env variables
+CACHE_DRIVER=memcached
+QUEUE_CONNECTION=database
+
+MIN_UNITS=10
+MAX_UNITS=20
+MIN_GAME_PARTICIPANTS=5
+MAX_UNIT_HEALTH=10
+MAX_ACTIVE_BATTLES=5
+ATTACK_DAMAGE=0.5
+ATTACK_DAMAGE_ONE_UNIT=1
+STAND_DOWN_DAMAGE=1
+STAND_DOWN_TIME=0.01
